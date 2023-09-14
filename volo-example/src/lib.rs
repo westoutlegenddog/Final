@@ -171,7 +171,7 @@ impl volo_gen::volo::example::ItemService for S {
 		let key = (&_req.key[..]).to_string();
 		let value = (&_req.value[..]).to_string();
 		let life:u128 = _req.life.try_into().unwrap();
-		let otherport = (&_req.value[..]).to_string();
+		let otherport = (&_req.otherport[..]).to_string();
 		self.check();
 		self.store().expect("Error in storing the data");
 		//println!("{}",life);
@@ -190,6 +190,33 @@ impl volo_gen::volo::example::ItemService for S {
 					resp.key = key.clone().into();
 					resp.state = false;
 					return Ok(resp);
+				}
+
+			}
+			"getport" => {
+				if self.proxy.read().unwrap().borrow()[0].eq("n"){
+					//println!("fffff");
+					resp.op = "getportfail".into();
+					resp.value = self.proxy.read().unwrap().borrow()[1].clone().into();
+					resp.state = false;
+					return Ok(resp);
+				}
+				else{
+					resp.state = true;
+					//self.store().expect("Error in storing the data");
+					let port = otherport.clone();
+					let keyport = key.clone();
+					//let value = resp.value.clone();
+					let (tx, rx) = tokio::sync::oneshot::channel();
+					tokio::spawn(async move {
+						let message = other("get".to_string(),keyport, " ".into(), &port).await;
+						//println!("lib{:?}", message);
+						if tx.send(message).is_err() {
+							println!("Failed to send result to the channel");
+						}
+					});
+					let message = rx.await.expect("Failed to receive result from the channel");
+        			return Ok(message);
 				}
 
 			}
@@ -246,10 +273,16 @@ impl volo_gen::volo::example::ItemService for S {
 					let port = otherport.clone();
 					let key = resp.key.clone();
 					let value = resp.value.clone();
+					let (tx, rx) = tokio::sync::oneshot::channel();
 					tokio::spawn(async move {
-						slave("setslave".to_string(),key.into_string(), value.into_string(), &port).await;
+						let message = other("set".to_string(),key.into_string(), value.into_string(), &port).await;
+						//println!("lib{:?}", message);
+						if tx.send(message).is_err() {
+							println!("Failed to send result to the channel");
+						}
 					});
-					return Ok(resp);
+					let message = rx.await.expect("Failed to receive result from the channel");
+        			return Ok(message);
 				}
 			}
 			"setslave" => {
@@ -391,17 +424,19 @@ async fn slave(opstr: String, key:String, value:String, port: &str) {
 	}
 }
 
+use volo_gen::volo::example::GetItemResponse;
 
-async fn other(opstr: String, key:String, value:String, port: &str) {
-	println!("1111{}", port);
+async fn other(opstr: String, key:String, value:String, port: &str) -> GetItemResponse{
+	//println!("1111{}", port);
 	unsafe { ADDR_STR = port.to_string(); 
 	//tracing_subscriber::fmt::init();
 
-	println!("{:?}", ADDR_STR);}
+	//println!("{:?}", ADDR_STR);
+	}
 	let client: volo_gen::volo::example::ItemServiceClient =
 	unsafe{
 		let addr: SocketAddr = ADDR_STR.parse().unwrap();
-		println!("addr {:?}", addr);
+		//println!("addr {:?}", addr);
 		volo_gen::volo::example::ItemServiceClientBuilder::new("volo-example")
 		.layer_outer(LogLayer)
 		.address(addr)
@@ -409,20 +444,46 @@ async fn other(opstr: String, key:String, value:String, port: &str) {
 	};
 	let req = volo_gen::volo::example::GetItemRequest { op:opstr.into(), key:key.into(), value:value.into(), life:0i32, otherport:" ".into()};
 	//println!("3333");
-	let resp = client.get_item(req).await;
+	client.get_item(req).await.expect("Error in other()!")
 	//println!("4444");
+	/*
 	match resp {
 		core::result::Result::Ok(info) => {
+			let opstr: &str = &info.op[..];
+			let key = (&info.key[..]).to_string();
+			let value = (&info.value[..]).to_string();
 			let state: bool = info.state;
-			if state == true{
-				println!("Succcessfully connect to slaves");
-			}
-			else{
-				println!("Fail to connect to slaves");
+			match opstr{
+				"get" => { 
+					if state == true{
+						return format!("The value of key \"{}\" is \"{}\"", key, value);
+					}
+					else{
+						return format!("The value of key \"{}\" does not exist", key);
+					}
+				}
+				"set" => {
+					if state == false{
+						return format!("The value of key \"{}\" is \"{}\", which already exists", key, value);
+					}
+					else{
+						return format!("Successfully inserted");
+					}
+				}
+				"setslave" => {
+					return format!("You can not set the slave, the master port is \"{}\"", value);
+				}
+				_ => {
+					tracing::error!("Error (1) in other()!");
+					return "Error (1) in other()".to_string();
+				}
 			}
 		}
-		Err(e) => tracing::error!("{:?}", e),
-	}
+		core::result::Result::Err(e) => {
+			tracing::error!("{:?}", e);
+			return "Error (2) in other()".to_string();
+		}
+	}*/
 }
 
 
